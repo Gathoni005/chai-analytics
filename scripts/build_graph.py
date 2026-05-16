@@ -25,11 +25,7 @@ from pathlib import Path
 import numpy as np
 from pymongo import MongoClient
 
-MONGODB_URI = os.getenv("MONGODB_URI")
-if not MONGODB_URI:
-    raise RuntimeError("MONGODB_URI environment variable is not set")
-DATA_DIR      = Path(os.getenv("DATA_DIR", str(Path(__file__).resolve().parent.parent / "data")))
-
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/chaimterics")
 GPS_EDGE_THRESHOLD_KM = 5.0
 
 
@@ -51,6 +47,21 @@ def extract_node_features(farm: dict) -> dict:
     seasons = sorted(farm.get("historical_seasons", []),
                      key=lambda s: s["season_year"])
 
+    # flatten all monthly kgs means and rainfall for all seasons
+    season_means = []
+    all_monthly_kgs = []
+    all_monthly_rains = []
+
+    for s in seasons:
+        kg = [v for v in s.get("monthly_kg", []) if v is not None]
+        rainfall = [for v in v for s.get("season_rainfall_mm", []) if v is not None]
+        if kg:
+            season_means.append(float(np.mean(kg)))
+            all_monthly_kgs.extend(kg)
+        if rainfall:
+            all_monthly_rains.extend(rainfall)
+
+    
     # Yield history: mean monthly kg per season (up to 15 seasons)
     season_means = []
     for s in seasons:
@@ -61,7 +72,9 @@ def extract_node_features(farm: dict) -> dict:
     # Pad/truncate to 15 seasons
     padded = (season_means + [0.0] * 15)[:15]
 
-    # Recent yield trend: slope of last 5 season means
+    # YIELD_TREND_SLOPE: slope of season means over time (recent 5 seasons or all if <5)
+    # fit y = mx + c for across 5 seasons, m is the slope
+    # shows whether are improving or declining yields in recent years, which may indicate good/bad practices or external factors
     recent = season_means[-5:] if len(season_means) >= 2 else season_means
     if len(recent) >= 2:
         xs    = np.arange(len(recent), dtype=float)
@@ -69,19 +82,107 @@ def extract_node_features(farm: dict) -> dict:
     else:
         slope = 0.0
 
-    # Average rainfall from historical seasons
-    rain_vals = []
+    # YIELD STANDARD DEVIATION (VARIABILITY) across seasons (kg)
+    # shows how consistent the farm is across seasons, which may indicate resilience to external factors or variability in practices
+    # σ = sqrt( (1/N) Σ(yᵢ - ȳ)² )
+    # high σ means the farm swings wildly between good and bad months
+    # low σ means consistent output regardless of season
+    yield_std = float(np.std(all_monthly_kgs)) if len(all_monthly_kgs) > 1 else 0.0
+
+    # SEASONAL_AMPLITUDE: standard deviation of season means (kg)
+    # shows how much the farm's yield changes across seasons, which may indicate sensitivity to seasonal factors or variability in practices
+    # A = (max-min) / mean 
+    if all_monthly_kgs and np.mean(all_monthly_kgs) > 0:
+        amplitude = float(max(all_monthly_kgs) - min(all_monthly_kgs)) / float(np.mean(all_monthly_kgs))
+        
+    else:
+        amplitude = 0.0
+
+    # PRUNING_RECOVERY_RATE 
+    # From agronomic rules: pruning month → 45% yield, month+1 → 78%, month+2 → 108% flush
+    # We detect pruning months (yield ≤ 50% of season mean)
+    # then measure actual month+2 yield vs expected flush (1.08 × season mean)
+    # r > 1.0 means this farm recovers faster than the model expects
+    # r < 1.0 means it recovers slower — possible soil or management issue
+    recovery_rates = []
     for s in seasons:
-        r = s.get("season_rainfall_mm", [])
-        valid = [v for v in r if v is not None]
-        if valid:
-            rain_vals.append(float(np.mean(valid)))
-    avg_rainfall = float(np.mean(rain_vals)) if rain_vals else 100.0
+        kg = s.get("monthly_kg", [])
+        s_mean = np.mean([v for v in kg if v is not none]) if kg else 0.0
+        if s_mean <= 0:
+            continue
+        for idx, val in enumerate(kg):
+            if val is None:
+                continue
+            if val <= 0.5 * s_mean and idx + 2 < len(kg):
+                flush_actual = kg[idx + 2]
+                flush_expected = 1.08 * s_mean
+                if flush_actual is not None and flush_expected > 0:
+                    recovery_rates.append(float(flush_actual) / flush_expected)
+    pruning_recovery_rate = float(np.mean(recovery_rates)) if recovery rates else 1.0
+    # RAINFALL_RESPONSE_BETA
+    # β = Σ(rᵢ - r̄)(yᵢ - ȳ) / Σ(rᵢ - r̄)²
+    # this is the standard OLS slope formula from numerical methods
+    # β > 0: farm yields more when it rains more (rain-dependent)
+    # β ≈ 0: farm yield is independent of rainfall (good drainage / irrigation)
+    # β < 0: rare, would mean yield drops with rain (waterlogging)
+    # we pair each monthly yield with the corresponding monthly rainfall
+    rainfall_response_beta = 0.0
+    paired_kg, paired_rain = [],[]
+   
+    for s in seasons:
+        kg = s.get("monthly_kg", [])
+        rain = s.get("season_rainfall_mm", [])
+        for idx in range(min(len(kg), len(rain))):
+            if kg[idx] is not None and tain[idx] is not None:
+                paired_kg.appen(float(kg[idx]))
+                paired_rain.append(float(rain[idx]))
+
+            if len(paired_kg) >= 4:
+                rain_arr = np.array(paired_rain),
+                kg_arr = np.array(paired_kg),
+                rain_deviation = rain_arr - rain_arr.mean() # (rᵢ - r̄)
+                kg_deviation = kg_arr - kg_arr.mean() # (yᵢ - ȳ)
+
+                denominator = np.sum(rain_deviation ** 2) # Σ(rᵢ - r̄)²
+                if denominator < 1e-8:
+                    rainfall_response_beta = float(np.sum(rain_deviation * kg_deviation) / denominator)
+    
+    #FERTILIZER_EFFICIENCY
+    # η = yield increase in month after application / kg of fertiliser applied
+    # compares the month+1 yield to the season mean (baseline)
+    # positive η means fertiliser lifted yield above baseline
+    # negative η means yield was below baseline even after application
+    efficiencies = []
+    for s in seasons:
+        kg = s.get("monthly_kg", [])
+        fert_apps = s.get("fertilizer_applications", [])
+        s_mean = np.mean([v for v in kg if v is not None]) if kg else 0
+        if s_mean <= 0 or not fert_apps:
+            continue
+            for app in fert_applications:
+                quantity = float(app.get("quantity_kg", 0))
+                month_idx = app.get("season_month_idx")
+                if quantity <= 0 or month_idx is None:
+                    continue
+                next_idx = month_idx + 1
+                if next_idx < len(kg) and kg[next_idx] is not None:
+                    delta_yield = kg[next_idx] - s_mean
+                    efficiencies.append(delta_yield / quantity)
+
+    fertiliser_efficiency = float(np.mean(efficiencies)) if efficiencies else 0.0 
+
+    # Average rainfall from historical seasons
+    avg_rainfall = float(np.mean(all_monthly_rainfall)) if all_monthly_rainfall else 100.0
 
     return {
         "season_yield_means":  padded,           # 15-dim yield history
         "overall_yield_mean":  float(np.mean(season_means)) if season_means else 0.0,
         "yield_trend_slope":   slope,
+        "yield_standard_deviation": yield_std,
+        "seasonal_amplitude":  amplitude,
+        "pruning_recovery_rate": pruning_recovery_rate,
+        "rainfall_response_beta": rainfall_response_beta,
+        "fertiliser_efficiency":  fertiliser_efficiency,   
         "hectares":            float(farm.get("hectares", 1.0)),
         "altitude_m":          float(farm.get("altitude_m", 1700)),
         "avg_rainfall_mm":     avg_rainfall,
@@ -91,7 +192,7 @@ def extract_node_features(farm: dict) -> dict:
     }
 
 
-def build_edges(farms: list[dict]) -> list[dict]:
+def build_edges(farms: list[dict], nodes: list[dict], alpha: float = 0.6) -> list[dict]:
     """
     Build edge list following roadmap edge rules.
     Returns list of {src, dst, weight, edge_type} dicts.
@@ -150,14 +251,16 @@ def build_edges(farms: list[dict]) -> list[dict]:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--validate", action="store_true",
-                        help="Print graph stats after building")
+                        help="Print graph stats and feature distributions after building")
+    parser.add_argument("--alpha", type=float, default=0.6,
+                        help="0.0=pure feature similarity, 1.0=pure geography. Default 0.6")
     args = parser.parse_args()
 
     print(f"Connecting to {MONGODB_URI} ...")
     client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
     db     = client.get_default_database()
     db.command("ping")
-    print(f"Connected to {db.name}\n")
+    print("Connected.\n")
 
     # Load all farms
     farms = list(db.farms.find({}, {"_id": 0}))
@@ -180,7 +283,7 @@ def main():
 
     # Build edge list
     print("Building edges ...")
-    edges = build_edges(farms)
+    edges = build_edges(farms, nodes, alpha=args.alpha)
 
     # Edge type breakdown
     type_counts = {}
@@ -200,6 +303,7 @@ def main():
         "nodes":      nodes,
         "edges":      edges,
         "edge_types": type_counts,
+        "alpha":      args.alpha,
         "built_at":   datetime.utcnow().isoformat(),
         "status":     "built",
     }
@@ -208,25 +312,48 @@ def main():
     print(f"\nSaved farm_graph_v1 to MongoDB.")
 
     if args.validate:
-        # Connectivity check — avg edges per node
         degree = {}
         for e in edges:
             degree[e["src"]] = degree.get(e["src"], 0) + 1
             degree[e["dst"]] = degree.get(e["dst"], 0) + 1
         avg_degree = sum(degree.values()) / len(nodes) if nodes else 0
+        isolated   = len(nodes) - len(degree)
 
-        print(f"\n-- Graph validation --")
+        print(f"\n-- Graph connectivity --")
         print(f"  Avg degree per node : {avg_degree:.1f}")
         print(f"  Max degree          : {max(degree.values()) if degree else 0}")
-        print(f"  Isolated nodes      : {len(nodes) - len(degree)}")
+        print(f"  Isolated nodes      : {isolated}  {'(bad)' if isolated > 5 else '(OK)'}")
 
-        # Sample 3 edges
-        print(f"\n-- Sample edges --")
-        for e in edges[:3]:
-            print(f"  {e['src_member']} ↔ {e['dst_member']}  "
-                  f"weight={e['weight']}  type={e['edge_type']}")
+        weights = [e["weight"] for e in edges]
+        w_geo   = [e["w_geo"]  for e in edges]
+        w_feat  = [e["w_feat"] for e in edges]
+        print(f"\n-- Edge weight distribution --")
+        print(f"  Combined  mean={np.mean(weights):.3f}  std={np.std(weights):.3f}")
+        print(f"  Geo       mean={np.mean(w_geo):.3f}")
+        print(f"  Feature   mean={np.mean(w_feat):.3f}")
+
+        print(f"\n-- New feature distributions ({len(nodes)} farms) --")
+        for key, label in [
+            ("yield_std",              "Yield std (kg)"),
+            ("seasonal_amplitude",     "Seasonal amplitude"),
+            ("pruning_recovery_rate",  "Pruning recovery rate"),
+            ("rainfall_response_beta", "Rainfall beta (kg/mm)"),
+            ("fertiliser_efficiency",  "Fertiliser efficiency"),
+        ]:
+            vals = [n["features"][key] for n in nodes]
+            print(f"  {label:<40} mean={np.mean(vals):7.3f}  "
+                  f"std={np.std(vals):.3f}  min={min(vals):.3f}  max={max(vals):.3f}")
+
+        print(f"\n-- Top 5 edges by combined weight --")
+        for e in sorted(edges, key=lambda e: e["weight"], reverse=True)[:5]:
+            print(f"  {e['src_member']} <-> {e['dst_member']:<12} "
+                  f"w={e['weight']:.3f}  geo={e['w_geo']:.3f}  "
+                  f"feat={e['w_feat']:.3f}  type={e['edge_type']}")
 
     print("\nStep done. Run train_gnn.py next.")
+    print("Tip: re-run with different --alpha to tune edge structure:")
+    print("  python scripts/build_graph.py --alpha 0.4 --validate  # more agronomic")
+    print("  python scripts/build_graph.py --alpha 0.8 --validate  # more geographic")
 
 
 if __name__ == "__main__":
