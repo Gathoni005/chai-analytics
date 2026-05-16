@@ -20,11 +20,15 @@ requests==2.32.3
 
 # API (Phase 1 Flask — install now to avoid conflicts later)
 flask==3.1.0
+Werkzeug>=3.1
 flask-jwt-extended==4.7.1
 gunicorn==23.0.0
 flask-cors
 
 # Torch (install stub now; full LSTM in Phase 4)
+torch
+torch-geometric
+
 # Uncomment if you have the GPU RAM. Otherwise leave commented for Phase 1.
 torch
 #AI Agent

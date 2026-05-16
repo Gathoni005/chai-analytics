@@ -59,8 +59,8 @@ def load_graph(db) -> tuple[np.ndarray, np.ndarray, np.ndarray, list]:
                 f["yield_standard_deviation"],  # 1 yield volatility
                 f["seasonal_amplitude"],        # 1 difference between peak and trough months
                 f["pruning_recovery_rate"],     # 1 how quickly farm recovers yield after pruning events (flush vs expected rate)
-                f["rainfall_response"],         # 1 correlation of yield with rainfall patterns (yield sensitivity to rain)
-                f["fertilizer_efficiency"],     # 1 how much yield increases per unit of fertilizer used (kg per kg fertilizer)
+                f["rainfall_response_beta"],         # 1 correlation of yield with rainfall patterns (yield sensitivity to rain)
+                f["fertiliser_efficiency"],     # 1 how much yield increases per unit of fertilizer used (kg per kg fertilizer)
                 f["hectares"],                  # 1 farm size
                 f["altitude_m"],                # 1 elevation
                 f["avg_rainfall_mm"],           # 1 mean rainfall

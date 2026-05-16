@@ -54,7 +54,7 @@ def extract_node_features(farm: dict) -> dict:
 
     for s in seasons:
         kg = [v for v in s.get("monthly_kg", []) if v is not None]
-        rainfall = [for v in v for s.get("season_rainfall_mm", []) if v is not None]
+        rainfall = [v for v in s.get("season_rainfall_mm", []) if v is not None]
         if kg:
             season_means.append(float(np.mean(kg)))
             all_monthly_kgs.extend(kg)
@@ -107,7 +107,7 @@ def extract_node_features(farm: dict) -> dict:
     recovery_rates = []
     for s in seasons:
         kg = s.get("monthly_kg", [])
-        s_mean = np.mean([v for v in kg if v is not none]) if kg else 0.0
+        s_mean = np.mean([v for v in kg if v is not None]) if kg else 0.0
         if s_mean <= 0:
             continue
         for idx, val in enumerate(kg):
@@ -118,7 +118,7 @@ def extract_node_features(farm: dict) -> dict:
                 flush_expected = 1.08 * s_mean
                 if flush_actual is not None and flush_expected > 0:
                     recovery_rates.append(float(flush_actual) / flush_expected)
-    pruning_recovery_rate = float(np.mean(recovery_rates)) if recovery rates else 1.0
+    pruning_recovery_rate = float(np.mean(recovery_rates)) if recovery_rates else 1.0
     # RAINFALL_RESPONSE_BETA
     # β = Σ(rᵢ - r̄)(yᵢ - ȳ) / Σ(rᵢ - r̄)²
     # this is the standard OLS slope formula from numerical methods
@@ -133,15 +133,15 @@ def extract_node_features(farm: dict) -> dict:
         kg = s.get("monthly_kg", [])
         rain = s.get("season_rainfall_mm", [])
         for idx in range(min(len(kg), len(rain))):
-            if kg[idx] is not None and tain[idx] is not None:
-                paired_kg.appen(float(kg[idx]))
+            if kg[idx] is not None and rain[idx] is not None:
+                paired_kg.append(float(kg[idx]))
                 paired_rain.append(float(rain[idx]))
 
             if len(paired_kg) >= 4:
                 rain_arr = np.array(paired_rain),
                 kg_arr = np.array(paired_kg),
-                rain_deviation = rain_arr - rain_arr.mean() # (rᵢ - r̄)
-                kg_deviation = kg_arr - kg_arr.mean() # (yᵢ - ȳ)
+                rain_deviation = rain_arr - np.mean(rain_arr) # (rᵢ - r̄)
+                kg_deviation = kg_arr - np.mean(kg_arr) # (yᵢ - ȳ)
 
                 denominator = np.sum(rain_deviation ** 2) # Σ(rᵢ - r̄)²
                 if denominator < 1e-8:
@@ -172,7 +172,7 @@ def extract_node_features(farm: dict) -> dict:
     fertiliser_efficiency = float(np.mean(efficiencies)) if efficiencies else 0.0 
 
     # Average rainfall from historical seasons
-    avg_rainfall = float(np.mean(all_monthly_rainfall)) if all_monthly_rainfall else 100.0
+    avg_rainfall = float(np.mean(all_monthly_rains)) if all_monthly_rains else 100.0
 
     return {
         "season_yield_means":  padded,           # 15-dim yield history
