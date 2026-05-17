@@ -20,6 +20,11 @@ import os
 import argparse
 from datetime import datetime
 from pathlib import Path
+import torch
+import torch.nn.functional as F
+from torch_geometric.nn import SAGEConv
+from torch_geometric.data import Data
+
 
 import numpy as np
 from pymongo import MongoClient
@@ -110,17 +115,6 @@ def train_graphsage(X, edge_index, edge_weights, n_clusters=6,
     2-layer GraphSAGE using PyTorch Geometric.
     Returns node embeddings (n_nodes, hidden_dim).
     """
-    try:
-        import torch
-        import torch.nn.functional as F
-        from torch_geometric.nn import SAGEConv
-        from torch_geometric.data import Data
-    except ImportError:
-        raise ImportError(
-            "PyTorch Geometric not installed.\n"
-            "Run: pip install torch torch-geometric --break-system-packages"
-        )
-
     print(f"\nTraining GraphSAGE: {epochs} epochs, {n_clusters} clusters, hidden={hidden_dim}")
 
     x           = torch.FloatTensor(X)

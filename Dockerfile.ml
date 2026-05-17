@@ -15,6 +15,7 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel
+RUN pip install torch-geometric
 #RUN pip install --no-cache-dir torch==2.3.1
 #RUN pip install --no-cache-dir torch-geometric==2.5.3
 RUN pip install --no-cache-dir -r requirements.txt
