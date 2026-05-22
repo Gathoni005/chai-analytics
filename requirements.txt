@@ -1,11 +1,10 @@
 # Core ML
-xgboost
+xgboost==2.1.1
 lightgbm==4.5.0          # auto_arima wrapper for SARIMA
 scikit-learn==1.5.2
 scipy>=1.11.0
 statsmodels>=0.14.2
 pmdarima>=2.0.4
-
 # Data
 pandas==2.2.3
 numpy==1.26.4

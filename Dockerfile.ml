@@ -1,26 +1,34 @@
-FROM pytorch/pytorch:latest
-
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps (needed for some scipy/statsmodels wheels on slim)
-#RUN apt-get update && apt-get install -y --no-install-recommends \
-#    build-essential \
-#    gcc \
-#    g++ \
-#    python3-dev \
-#    libopenblas-dev \
-#    liblapack-dev \
-#    && rm -rf /var/lib/apt/lists/* """
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    g++ \
+    python3-dev
+
+RUN pip install --upgrade pip
+
+# PyG dependencies
+RUN pip install \
+    pyg-lib \
+    torch-scatter \
+    torch-sparse \
+    torch-cluster \
+    torch-spline-conv \
+    -f https://data.pyg.org/whl/torch-2.4.1+cpu.html
+
+# PyG
+RUN pip install torch-geometric \
+    && pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
+    --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
-RUN pip install --upgrade pip setuptools wheel
-RUN pip install torch-geometric
-#RUN pip install --no-cache-dir torch==2.3.1
-#RUN pip install --no-cache-dir torch-geometric==2.5.3
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
-# Scripts and models directories are volume-mounted at runtime
-# so we don't COPY them here — changes in ./scripts are live immediately
+COPY . .
+
+RUN python -c "import torch_geometric; print('PyG OK')"
 
 CMD ["tail", "-f", "/dev/null"]
