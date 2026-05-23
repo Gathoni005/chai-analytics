@@ -173,7 +173,7 @@ def _build_recommendations(farm: dict, xgb: dict, sarima_meta: dict | None,
     return recs
 
 
-def _call_groq(pipeline_result: dict, host: str, model: str) -> str | None:
+def _call_groq(pipeline_result: dict, api_key: str, model: str) -> str | None:
     farm    = pipeline_result["farm"]
     current = pipeline_result["current_season"]
     xgb     = pipeline_result["xgb_prediction"]
@@ -223,7 +223,7 @@ def _call_groq(pipeline_result: dict, host: str, model: str) -> str | None:
             timeout=30,
         )
         resp.raise_for_status()
-        return resp.json().get("response", "").strip()
+        return resp.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
         return f"[Narrative unavailable: {e}]"
 
@@ -231,7 +231,7 @@ def _call_groq(pipeline_result: dict, host: str, model: str) -> str | None:
 @insights_bp.route("/<member_no>/insights", methods=["GET"])
 @jwt_required()
 def get_insights(member_no: str):
-    current_user = get_jwt_identity
+   # current_user = get_jwt_identity()
     
     db = get_db()
 
@@ -312,7 +312,7 @@ def get_insights(member_no: str):
     if narrative:
         result["narrative"] = _call_groq(
             result,
-            host  = current_app.config["GROQ_HOST"],
+            api_key  = current_app.config["GROQ_API_KEY"],
             model = current_app.config["GROQ_MODEL"],
         )
 

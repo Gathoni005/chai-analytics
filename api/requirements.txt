@@ -2,7 +2,7 @@
 flask==3.1.0
 flask-jwt-extended==4.7.1
 gunicorn==23.0.0
-flask-cors
+
 
 # database
 joblib==1.4.2
@@ -10,7 +10,7 @@ pymongo==4.9.2
 
 
 # HTTPS weather fetch
-pyarrow==17.0.0
+#pyarrow==14.0.2
 requests==2.32.3
 flask-cors==4.0.0
 

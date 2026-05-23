@@ -11,6 +11,8 @@ services:
       GROQ_MODEL: ${GROQ_MODEL}
       DATA_DIR: /app/data  
       MODELS_DIR: /app/models
+    expose:
+      - "5000"
     volumes:
       - ./scripts:/app/scripts
       - ./models:/app/models
@@ -18,8 +20,8 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: api/Dockerfile
+      context: ./api
+      dockerfile: Dockerfile
     container_name: backend_api
     ports:
       - "5000:5000"
@@ -31,5 +33,5 @@ services:
       - JWT_SECRET_KEY=chaimterics-super-secret-key-32bytes!!
 
     volumes:
-      - ./api:/app/api
+      - ./api:/app
       - ./models:/app/models:ro
