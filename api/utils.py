@@ -99,8 +99,8 @@ def farm_summary(farm: dict) -> dict:
 
     def get_gnn_output(member_no: str) -> dict | None:
     """Load GNN cluster_id and anomaly_score for a farm. Returns None if not yet computed."""
-    db  = get_db()
-    doc = db.gnn_outputs.find_one({"ktda_member_no": member_no},
+        db  = get_db()
+        doc = db.gnn_outputs.find_one({"ktda_member_no": member_no},
                                    {"_id": 0, "embedding": 0})
     return doc
 
@@ -109,11 +109,11 @@ def farm_summary(farm: dict) -> dict:
     Return other farms in the same cluster ordered by anomaly_score descending.
     Used to surface peer comparison in recommendations.
     """
-    db   = get_db()
-    docs = list(
-        db.gnn_outputs.find(
-            {"cluster_id": cluster_id, "ktda_member_no": {"$ne": member_no}},
-            {"_id": 0, "embedding": 0},
-        ).sort("anomaly_score", -1).limit(limit)
-    )
+        db   = get_db()
+        docs = list(
+            db.gnn_outputs.find(
+                {"cluster_id": cluster_id, "ktda_member_no": {"$ne": member_no}},
+                {"_id": 0, "embedding": 0},
+            ).sort("anomaly_score", -1).limit(limit)
+        )
     return docs
