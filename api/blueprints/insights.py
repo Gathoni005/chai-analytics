@@ -218,7 +218,7 @@ def _call_groq(pipeline_result: dict, api_key: str, model: str) -> str | None:
                 "model":       model,
                 "messages":    [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
-                "max_tokens":  300,
+                "max_tokens":  500,
             },
             timeout=30,
         )
