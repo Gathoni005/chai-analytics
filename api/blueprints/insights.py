@@ -223,7 +223,11 @@ def _call_groq(pipeline_result: dict, api_key: str, model: str) -> str | None:
             timeout=30,
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
+        content = resp.json()["choices"][0]["message"]["content"].strip()
+        import re
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+        return content
+
     except Exception as e:
         return f"[Narrative unavailable: {e}]"
 
