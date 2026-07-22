@@ -1,9 +1,5 @@
 """
 ChaiMetrics Flask API — app factory.
-
-also hosted on docker in its own comtainer
-Production (gunicorn):
-    gunicorn "api.app:create_app()" --bind 0.0.0.0:5000 --workers 2
 """
 
 import os
