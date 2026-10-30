@@ -31,6 +31,29 @@ insights_bp = Blueprint("insights", __name__)
 SEASON_MONTH_NAMES = ["Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar","Apr","May","Jun"]
 MINIBONUS_MONTHS   = {0, 1, 2, 4, 5}
 
+# Default thresholds (matching rule_engine.py)
+DEFAULT_THRESHOLDS = {
+    "yield_gap_warn_pct":   15.0,
+    "yield_gap_alert_pct":  30.0,
+    "forecast_drop_pct":    20.0,
+    "gnn_anomaly_high":     0.75,
+    "gnn_anomaly_medium":   0.50,
+}
+
+
+def _load_thresholds(db, factory_code: str) -> dict:
+    """Load rule thresholds from factory_metadata, with defaults as fallback."""
+    try:
+        meta = db.factory_metadata.find_one({"_type": "factory_metadata"}, {"_id": 0})
+        if meta:
+            for f in meta.get("factories", []):
+                if f["factory_code"] == factory_code:
+                    thresholds = f.get("rule_thresholds", {})
+                    return {**DEFAULT_THRESHOLDS, **thresholds}
+    except Exception:
+        pass
+    return DEFAULT_THRESHOLDS
+
 
 def _current_month_idx() -> int:
     """Return the current season_month_idx based on today's calendar month."""
@@ -92,22 +115,31 @@ def _run_xgb_prediction(farm: dict, models: dict, month_idx: int) -> dict:
 
 
 def _build_recommendations(farm: dict, xgb: dict, sarima_meta: dict | None,
-                            pricing_meta: dict) -> list[dict]:
+                            pricing_meta: dict, db) -> list[dict]:
     recs    = []
     current = _get_current_season_summary(farm)
     ha      = float(farm.get("hectares", 1.0))
+    factory = farm["factory_code"]
+
+    # Load configurable thresholds
+    thresholds = _load_thresholds(db, factory)
+    YIELD_GAP_WARN_PCT  = thresholds["yield_gap_warn_pct"]
+    YIELD_GAP_ALERT_PCT = thresholds["yield_gap_alert_pct"]
+    FORECAST_DROP_PCT   = thresholds["forecast_drop_pct"]
+    GNN_ANOMALY_HIGH    = thresholds["gnn_anomaly_high"]
+    GNN_ANOMALY_MEDIUM  = thresholds["gnn_anomaly_medium"]
 
     # Yield gap
     if xgb.get("predicted_kg") and current.get("season_avg_kg"):
         pred   = xgb["predicted_kg"]
         actual = current["season_avg_kg"]
         gap    = (pred - actual) / pred * 100 if pred > 0 else 0
-        if gap > 30:
+        if gap > YIELD_GAP_ALERT_PCT:
             recs.append({"priority":"high","category":"yield",
                 "title":"Yield significantly below model expectation",
                 "detail":f"Average {actual}kg/mo vs expected {pred}kg/mo — {gap:.0f}% gap.",
                 "action":"Review fertiliser schedule and check for pest or soil pH issues."})
-        elif gap > 15:
+        elif gap > YIELD_GAP_WARN_PCT:
             recs.append({"priority":"medium","category":"yield",
                 "title":"Yield slightly below model expectation",
                 "detail":f"Average {actual}kg/mo vs expected {pred}kg/mo — {gap:.0f}% gap.",
@@ -118,7 +150,7 @@ def _build_recommendations(farm: dict, xgb: dict, sarima_meta: dict | None,
         fc  = sarima_meta.get("forecast_6mo", [])
         if fc and current.get("last_month_kg"):
             drop = (current["last_month_kg"] - np.mean(fc)) / current["last_month_kg"] * 100
-            if drop > 20:
+            if drop > FORECAST_DROP_PCT:
                 recs.append({"priority":"medium","category":"yield",
                     "title":"Forecast shows expected yield decline",
                     "detail":f"SARIMA projects avg {np.mean(fc):.0f}kg/mo over next 6 months.",
@@ -149,7 +181,7 @@ def _build_recommendations(farm: dict, xgb: dict, sarima_meta: dict | None,
         cluster_id    = gnn.get("cluster_id")
         peers         = gnn.get("peers", [])
 
-        if anomaly_score > 0.75:
+        if anomaly_score > GNN_ANOMALY_HIGH:
             peer_names = ", ".join(p["ktda_member_no"] for p in peers[:3])
             recs.append({"priority":"high","category":"anomaly",
                 "title":"Farm performance is a significant outlier in its cluster",
@@ -157,7 +189,7 @@ def _build_recommendations(farm: dict, xgb: dict, sarima_meta: dict | None,
                          f"substantially from its {len(peers)} structural peers in cluster {cluster_id}.",
                 "action":f"Compare management practices with nearby farms: {peer_names}. "
                          f"Investigate whether the gap is due to inputs, pruning timing, or soil."})
-        elif anomaly_score > 0.5:
+        elif anomaly_score > GNN_ANOMALY_MEDIUM:
             recs.append({"priority":"medium","category":"anomaly",
                 "title":"Farm shows moderate deviation from cluster peers",
                 "detail":f"GNN anomaly score {anomaly_score:.2f}/1.0 — performance diverges "
@@ -266,7 +298,7 @@ def get_insights(member_no: str):
     if gnn:
         gnn["peers"] = peers
     farm["_gnn"] = gnn   # inject for recommendation builder
-    recs    = _build_recommendations(farm, xgb, sarima, pricing)
+    recs    = _build_recommendations(farm, xgb, sarima, pricing, db)
 
     # Score
     score = 80

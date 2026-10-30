@@ -138,13 +138,13 @@ def extract_node_features(farm: dict) -> dict:
                 paired_rain.append(float(rain[idx]))
 
             if len(paired_kg) >= 4:
-                rain_arr = np.array(paired_rain),
-                kg_arr = np.array(paired_kg),
-                rain_deviation = rain_arr - np.mean(rain_arr) # (rᵢ - r̄)
-                kg_deviation = kg_arr - np.mean(kg_arr) # (yᵢ - ȳ)
+                rain_arr = np.array(paired_rain)
+                kg_arr = np.array(paired_kg)
+                rain_deviation = rain_arr - np.mean(rain_arr)  # (rᵢ - r̄)
+                kg_deviation = kg_arr - np.mean(kg_arr)        # (yᵢ - ȳ)
 
-                denominator = np.sum(rain_deviation ** 2) # Σ(rᵢ - r̄)²
-                if denominator < 1e-8:
+                denominator = np.sum(rain_deviation ** 2)      # Σ(rᵢ - r̄)²
+                if denominator > 1e-8:
                     rainfall_response_beta = float(np.sum(rain_deviation * kg_deviation) / denominator)
     
     #FERTILIZER_EFFICIENCY
@@ -155,7 +155,7 @@ def extract_node_features(farm: dict) -> dict:
     efficiencies = []
     for s in seasons:
         kg = s.get("monthly_kg", [])
-        fert_apps = s.get("fertilizer_applications", [])
+        fert_apps = s.get("fertiliser_applications", [])
         s_mean = np.mean([v for v in kg if v is not None]) if kg else 0
         if s_mean <= 0 or not fert_apps:
             continue

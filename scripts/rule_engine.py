@@ -31,13 +31,34 @@ PRICING_DIR = SARIMA_DIR / "pricing"
 SEASON_MONTH_NAMES = ["Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar","Apr","May","Jun"]
 MINIBONUS_MONTHS   = {0, 1, 2, 4, 5}
 
+# Default thresholds (used if factory_metadata not available)
+DEFAULT_THRESHOLDS = {
+    "yield_gap_warn_pct":   15.0,
+    "yield_gap_alert_pct":  30.0,
+    "forecast_drop_pct":    20.0,
+    "pricing_rise_pct":     5.0,
+    "pricing_drop_pct":     5.0,
+    "gnn_anomaly_high":     0.75,
+    "gnn_anomaly_medium":   0.50,
+}
 
-#  Thresholds 
-YIELD_GAP_WARN_PCT    = 15.0   # flag if actual > X% below model prediction
-YIELD_GAP_ALERT_PCT   = 30.0   # escalate to alert if gap > X%
-FORECAST_DROP_PCT     = 20.0   # flag if SARIMA forecasts > X% drop vs current
-PRICING_RISE_PCT      = 5.0    # flag if pricing forecast rises > X%
-PRICING_DROP_PCT      = 5.0    # flag if pricing forecast drops > X%
+
+def load_thresholds(factory_code: str) -> dict:
+    """Load rule thresholds from factory_metadata, with defaults as fallback."""
+    try:
+        from pymongo import MongoClient
+        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=3000)
+        db = client.get_default_database()
+        meta = db.factory_metadata.find_one({"_type": "factory_metadata"}, {"_id": 0})
+        if meta:
+            # Check for factory-specific thresholds
+            for f in meta.get("factories", []):
+                if f["factory_code"] == factory_code:
+                    thresholds = f.get("rule_thresholds", {})
+                    return {**DEFAULT_THRESHOLDS, **thresholds}
+    except Exception:
+        pass
+    return DEFAULT_THRESHOLDS
 
 
 @dataclass
@@ -148,8 +169,17 @@ def build_recommendations(farm: dict, xgb_result: dict, sarima_meta: dict | None
     current = get_current_season_summary(farm)
     member_no = farm["ktda_member_no"]
     ha        = float(farm.get("hectares", 1.0))
+    factory   = farm["factory_code"]
 
-    #  1. Yield gap check 
+    # Load configurable thresholds
+    thresholds = load_thresholds(factory)
+    YIELD_GAP_WARN_PCT   = thresholds["yield_gap_warn_pct"]
+    YIELD_GAP_ALERT_PCT  = thresholds["yield_gap_alert_pct"]
+    FORECAST_DROP_PCT    = thresholds["forecast_drop_pct"]
+    GNN_ANOMALY_HIGH     = thresholds["gnn_anomaly_high"]
+    GNN_ANOMALY_MEDIUM   = thresholds["gnn_anomaly_medium"]
+
+    #  1. Yield gap check
     if "predicted_kg" in xgb_result and current.get("season_avg_kg"):
         predicted = xgb_result["predicted_kg"]
         actual    = current["season_avg_kg"]
@@ -176,7 +206,7 @@ def build_recommendations(farm: dict, xgb_result: dict, sarima_meta: dict | None
                 action   = "Monitor closely. Consider soil test before next fertiliser application.",
             ))
 
-    #  2. SARIMA forecast check 
+    #  2. SARIMA forecast check
     if sarima_meta and sarima_meta.get("status") == "ok":
         forecast = sarima_meta.get("forecast_6mo", [])
         if forecast and current.get("last_month_kg"):
@@ -221,7 +251,7 @@ def build_recommendations(farm: dict, xgb_result: dict, sarima_meta: dict | None
                     action   = "No action required — informational. Rate changes are declared by KTDA.",
                 ))
 
-    # 4. Minibonus months approaching 
+    # 4. Minibonus months approaching
     current_month_idx = xgb_result.get("month_idx", 6)
     upcoming = [(current_month_idx + i) % 12 for i in range(1, 4)]
     upcoming_minibonus = [m for m in upcoming if m in MINIBONUS_MONTHS]
@@ -236,7 +266,7 @@ def build_recommendations(farm: dict, xgb_result: dict, sarima_meta: dict | None
             action   = "Prioritise plucking rounds in minibonus months for maximum income.",
         ))
 
-    #  5. Feature-driven input recommendation 
+    #  5. Feature-driven input recommendation
     top_features = xgb_result.get("top_features", [])
     feat_names   = [f["feature"] for f in top_features]
     if "fert_kg" in feat_names or "fert_lag1_kg" in feat_names:
@@ -250,6 +280,32 @@ def build_recommendations(farm: dict, xgb_result: dict, sarima_meta: dict | None
                        f"Recommended: 50kg/ha every 6 weeks during growing season "
                        f"(~{50 * ha:.0f}kg total for your {ha:.1f}ha).",
         ))
+
+    # 6. GNN anomaly detection
+    gnn = farm.get("_gnn")
+    if gnn:
+        anomaly_score = gnn.get("anomaly_score", 0)
+        cluster_id    = gnn.get("cluster_id")
+        peers         = gnn.get("peers", [])
+
+        if anomaly_score > GNN_ANOMALY_HIGH:
+            peer_names = ", ".join(p["ktda_member_no"] for p in peers[:3])
+            recs.append(Recommendation(
+                priority = "high",
+                category = "anomaly",
+                title    = "Farm performance is a significant outlier in its cluster",
+                detail   = f"GNN anomaly score {anomaly_score:.2f}/1.0 — this farm deviates "
+                         f"substantially from its {len(peers)} structural peers in cluster {cluster_id}.",
+                action   = f"Compare management practices with nearby farms: {peer_names}. "
+                         f"Investigate whether the gap is due to inputs, pruning timing, or soil."))
+        elif anomaly_score > GNN_ANOMALY_MEDIUM:
+            recs.append(Recommendation(
+                priority = "medium",
+                category = "anomaly",
+                title    = "Farm shows moderate deviation from cluster peers",
+                detail   = f"GNN anomaly score {anomaly_score:.2f}/1.0 — performance diverges "
+                         f"from structurally similar farms in the same zone.",
+                action   = "Review fertiliser and pruning schedule against collection centre average."))
 
     if not recs:
         recs.append(Recommendation(

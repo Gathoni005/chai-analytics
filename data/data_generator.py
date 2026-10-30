@@ -580,7 +580,16 @@ def generate_metadata():
         "generated_by": "ChaiMetrics synthetic data generator v2",
         "based_on":     "Real KTDA factory data — Weru (Tharaka-Nithi) and Rukuriri (Embu)",
         "factories":    [
-            {k: v for k, v in f.items() if k != "collection_centres"}
+            {**{k: v for k, v in f.items() if k != "collection_centres"},
+             "rule_thresholds": {
+                 "yield_gap_warn_pct":   15.0,
+                 "yield_gap_alert_pct":  30.0,
+                 "forecast_drop_pct":    20.0,
+                 "pricing_rise_pct":     5.0,
+                 "pricing_drop_pct":     5.0,
+                 "gnn_anomaly_high":     0.75,
+                 "gnn_anomaly_medium":   0.50,
+             }}
             for f in FACTORIES
         ],
         "collection_centres": {

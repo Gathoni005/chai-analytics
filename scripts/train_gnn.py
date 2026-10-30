@@ -129,11 +129,11 @@ def train_graphsage(X, edge_index, edge_weights, n_clusters=6,
             self.conv2 = SAGEConv(hidden_dim, out_dim)
             self.drop  = torch.nn.Dropout(dropout)
 
-        def forward(self, x, edge_index):
-            x = self.conv1(x, edge_index)
+        def forward(self, x, edge_index, edge_weight=None):
+            x = self.conv1(x, edge_index, edge_weight)
             x = F.relu(x)
             x = self.drop(x)
-            x = self.conv2(x, edge_index)
+            x = self.conv2(x, edge_index, edge_weight)
             return x
 
     model = GraphSAGE(in_dim=X.shape[1], hidden_dim=hidden_dim, out_dim=hidden_dim)
@@ -148,7 +148,7 @@ def train_graphsage(X, edge_index, edge_weights, n_clusters=6,
     model.train()
     for epoch in range(epochs):
         optim.zero_grad()
-        embeddings = model(data.x, data.edge_index)
+        embeddings = model(data.x, data.edge_index, data.edge_attr)
 
         # Positive loss: cosine similarity of connected pairs
         emb_src = F.normalize(embeddings[src_nodes], dim=1)
@@ -173,7 +173,7 @@ def train_graphsage(X, edge_index, edge_weights, n_clusters=6,
 
     model.eval()
     with torch.no_grad():
-        embeddings = model(data.x, data.edge_index).numpy()
+        embeddings = model(data.x, data.edge_index, data.edge_attr).numpy()
 
     return embeddings
 

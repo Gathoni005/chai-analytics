@@ -199,6 +199,9 @@ def build_rows(db, weather_lookup: dict, meta: dict) -> list[dict]:
                 # ── Calendar features ─────────────────────────────────────────
                 is_minibonus_month = int(month_idx in MINIBONUS_MONTHS)
                 is_annual_bonus    = int(month_idx == 11)   # June = season close
+                # Cyclic month encoding (period=12)
+                season_month_sin = float(np.sin(2 * np.pi * month_idx / 12))
+                season_month_cos = float(np.cos(2 * np.pi * month_idx / 12))
 
                 rows.append({
                     # Identifiers (not features — dropped before training)
@@ -234,6 +237,8 @@ def build_rows(db, weather_lookup: dict, meta: dict) -> list[dict]:
                     # Season structure features
                     "is_minibonus_month":   is_minibonus_month,
                     "is_annual_bonus":      is_annual_bonus,
+                    "season_month_sin":     season_month_sin,
+                    "season_month_cos":     season_month_cos,
 
                     # Rolling yield
                     "rolling_yield_3mo":    rolling_yield_3mo,
@@ -311,6 +316,7 @@ def main():
         "is_minibonus_month", "is_annual_bonus",
         "rolling_yield_3mo", "prior_season_avg",
         "season_month_idx",
+        "season_month_sin", "season_month_cos",
     ]
     categorical_features = [
         "factory_code", "collection_centre",
