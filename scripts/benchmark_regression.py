@@ -37,9 +37,12 @@ from sklearn.metrics import (
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
+from dotenv import load_dotenv
 
 import xgboost as xgb
 from pmdarima import auto_arima
+
+load_dotenv()
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -48,6 +51,9 @@ load_dotenv()
 
 # ─── Paths ───
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+load_dotenv(BASE_DIR / ".env")
+
 MODELS_DIR = BASE_DIR / "models"
 SARIMA_DIR = MODELS_DIR / "sarima"
 RESULTS_DIR = BASE_DIR / "results" / "benchmarks"
