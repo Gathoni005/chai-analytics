@@ -113,7 +113,7 @@ def load_gnn_norm_params(models_dir: Path):
 
 
 # ─── SARIMA Evaluation ───
-def evaluate_sarima(models_dir: Path, test_seasons: list = None, horizons: list = None):
+def evaluate_sarima(models_dir: Path, test_seasons: list = None, horizons: list = None, max_farms: int = None):
     """
     Evaluate SARIMA using expanding-window time-series CV.
     For each farm with sufficient data, train on expanding windows and forecast horizons.
@@ -134,6 +134,10 @@ def evaluate_sarima(models_dir: Path, test_seasons: list = None, horizons: list 
 
     ok_farms = manifest[manifest["status"] == "ok"]
     print(f"  {len(ok_farms)} farms with successfully trained SARIMA models")
+
+    if max_farms is not None:
+        ok_farms = ok_farms.head(max_farms)
+        print(f"  Limiting to {max_farms} farms for faster evaluation")
 
     # Connect to MongoDB to get farm historical data
     db = load_mongo_db()
@@ -575,6 +579,8 @@ def main():
                         help="Test seasons for holdout evaluation")
     parser.add_argument("--horizons", type=int, nargs="+", default=[1, 3, 6],
                         help="Forecast horizons for SARIMA evaluation")
+    parser.add_argument("--max-farms", type=int, default=None,
+                        help="Maximum number of farms to evaluate (for faster testing)")
     parser.add_argument("--skip-sarima", action="store_true", help="Skip SARIMA evaluation")
     parser.add_argument("--skip-xgboost", action="store_true", help="Skip XGBoost evaluation")
     parser.add_argument("--skip-gnn", action="store_true", help="Skip GNN evaluation")
@@ -601,7 +607,7 @@ def main():
     gnn_results = None
 
     if not args.skip_sarima:
-        sarima_results = evaluate_sarima(MODELS_DIR, args.test_seasons, args.horizons)
+        sarima_results = evaluate_sarima(MODELS_DIR, args.test_seasons, args.horizons, args.max_farms)
 
     if not args.skip_xgboost:
         xgb_results = evaluate_xgboost(MODELS_DIR, args.test_seasons)
