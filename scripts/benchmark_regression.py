@@ -52,7 +52,7 @@ MODELS_DIR = BASE_DIR / "models"
 SARIMA_DIR = MODELS_DIR / "sarima"
 RESULTS_DIR = BASE_DIR / "results" / "benchmarks"
 
-MONGODB_URI = os.environ["MONGO_URI"]
+MONGODB_URI = os.environ["MONGODB_URI"]
 
 
 # ─── Utility Functions ───
@@ -146,15 +146,30 @@ def evaluate_sarima(models_dir: Path, test_seasons: list = None, horizons: list 
         {"ktda_member_no": 1, "factory_code": 1, "historical_seasons": 1, "_id": 0}
     ))
 
-    results = []
+    total_farms = len(farms)
+    print(f"  Processing {total_farms} farms from MongoDB...")
 
-    for farm in farms:
+    results = []
+    processed = 0
+    skipped_insufficient_data = 0
+    skipped_no_test_season = 0
+    failed = 0
+
+    for farm_idx, farm in enumerate(farms):
         member_no = farm["ktda_member_no"]
         factory = farm["factory_code"]
+        processed += 1
+
+        # Progress indicator every 10 farms or on first/last
+        if processed % 10 == 1 or processed == total_farms:
+            print(f"  [{processed}/{total_farms}] Processing farm {member_no} ({factory})...")
 
         # Build the full monthly series
         series = build_farm_series(farm)
         if len(series) < 24:
+            skipped_insufficient_data += 1
+            if processed % 10 == 1:
+                print(f"    [SKIP] Insufficient data: {len(series)} months (< 24)")
             continue
 
         # Expanding window evaluation
@@ -162,16 +177,20 @@ def evaluate_sarima(models_dir: Path, test_seasons: list = None, horizons: list 
         seasons = sorted(set(s["season_year"] for s in farm.get("historical_seasons", [])))
         test_seasons_set = set(test_seasons)
 
+        farm_has_results = False
+
         for test_season in test_seasons_set:
             if test_season not in seasons:
                 continue
 
             train_seasons = [s for s in seasons if s < test_season]
             if len(train_seasons) < 2:
+                skipped_no_test_season += 1
                 continue
 
             train_series = build_farm_series_from_seasons(farm, train_seasons)
             if len(train_series) < 24:
+                skipped_insufficient_data += 1
                 continue
 
             try:
@@ -214,10 +233,25 @@ def evaluate_sarima(models_dir: Path, test_seasons: list = None, horizons: list 
                         "rmse": rmse, "mse": mse, "r2": r2, "mae": mae, "mape": mape,
                         "n_obs": len(train_series)
                     })
+                    farm_has_results = True
 
             except Exception as e:
+                failed += 1
                 print(f"    [FAIL] {member_no} season {test_season}: {e}")
                 continue
+
+        if farm_has_results and processed % 10 == 1:
+            # Show sample results for this farm
+            farm_results = [r for r in results if r["member_no"] == member_no]
+            for r in farm_results[:3]:  # Show first 3 horizons
+                print(f"    → Season {r['test_season']} H{r['horizon']}: RMSE={r['rmse']:.1f} R²={r['r2']:.3f} MAE={r['mae']:.1f}")
+
+    print(f"\n  SARIMA evaluation complete:")
+    print(f"    Processed: {processed} farms")
+    print(f"    Evaluated: {len(results)} farm-season-horizon points")
+    print(f"    Skipped (insufficient data): {skipped_insufficient_data}")
+    print(f"    Skipped (no valid test season): {skipped_no_test_season}")
+    print(f"    Failed: {failed}")
 
     df_results = pd.DataFrame(results)
     if df_results.empty:
@@ -298,6 +332,8 @@ def evaluate_xgboost(models_dir: Path, test_seasons: list = None):
         X_tr, X_val = X_train_scaled[tr_idx], X_train_scaled[val_idx]
         y_tr, y_val = y_train.iloc[tr_idx], y_train.iloc[val_idx]
 
+        print(f"    Fold {fold+1}/5: Training on {len(tr_idx)} samples, validating on {len(val_idx)} samples...")
+
         m = xgb.XGBRegressor(**model.get_params())
         m.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
 
@@ -309,13 +345,14 @@ def evaluate_xgboost(models_dir: Path, test_seasons: list = None):
         mask = y_val > 10
         mape = np.mean(np.abs((y_val[mask] - preds[mask]) / y_val[mask])) * 100 if mask.any() else np.nan
 
+        print(f"      → RMSE={rmse:.2f} R²={r2:.4f} MAE={mae:.2f} MAPE={mape:.2f}%")
+
         cv_results.append({
             "fold": fold + 1,
             "train_size": len(tr_idx),
             "val_size": len(val_idx),
             "rmse": rmse, "mse": mse, "r2": r2, "mae": mae, "mape": mape
         })
-        print(f"    Fold {fold+1}: RMSE={rmse:.1f}  R²={r2:.3f}  MAE={mae:.1f}  MAPE={mape:.1f}%")
 
     cv_df = pd.DataFrame(cv_results)
     cv_summary = cv_df[["rmse", "mse", "r2", "mae", "mape"]].agg(["mean", "std"])
@@ -324,6 +361,7 @@ def evaluate_xgboost(models_dir: Path, test_seasons: list = None):
 
     # ─── Holdout Test Set Evaluation ───
     print("\n  Evaluating on holdout test set (2023-2024)...")
+    print(f"    Test samples: {len(y_test)} across {row_ids_test['ktda_member_no'].nunique()} farms")
     preds_test = model.predict(X_test_scaled)
 
     rmse = np.sqrt(mean_squared_error(y_test, preds_test))
@@ -349,6 +387,7 @@ def evaluate_xgboost(models_dir: Path, test_seasons: list = None):
     print(f"    MAPE: {mape:.2f}%")
 
     # Per-farm breakdown on test set
+    print(f"\n  Computing per-farm metrics for {row_ids_test['ktda_member_no'].nunique()} farms...")
     test_df = row_ids_test.copy()
     test_df["actual"] = y_test.values
     test_df["predicted"] = preds_test
@@ -363,6 +402,16 @@ def evaluate_xgboost(models_dir: Path, test_seasons: list = None):
         rmse=("error", lambda x: np.sqrt(np.mean(x**2))),
         mape=("ape", "mean")
     ).reset_index()
+
+    # Log top/bottom performing farms
+    farm_errors_sorted = farm_errors.sort_values("mae")
+    print(f"  Per-farm MAE range: {farm_errors_sorted['mae'].min():.1f} – {farm_errors_sorted['mae'].max():.1f} kg")
+    print(f"  Top 5 farms (lowest MAE):")
+    for _, row in farm_errors_sorted.head(5).iterrows():
+        print(f"    {row['ktda_member_no']}: MAE={row['mae']:.1f} RMSE={row['rmse']:.1f} n={int(row['n_obs'])}")
+    print(f"  Bottom 5 farms (highest MAE):")
+    for _, row in farm_errors_sorted.tail(5).iterrows():
+        print(f"    {row['ktda_member_no']}: MAE={row['mae']:.1f} RMSE={row['rmse']:.1f} n={int(row['n_obs'])}")
 
     return {
         "cv_results": cv_df,
@@ -436,13 +485,16 @@ def evaluate_gnn(models_dir: Path):
 
     # ─── Correlation with Yield Variability (if farm data available) ───
     # Load farm yield stats to correlate with anomaly scores
+    print(f"  Loading yield data for {len(gnn_outputs)} farms from MongoDB...")
     farms = list(db.farms.find(
         {"ktda_member_no": {"$in": gnn_outputs["ktda_member_no"].tolist()}},
         {"ktda_member_no": 1, "historical_seasons": 1, "_id": 0}
     ))
 
     yield_stats = []
-    for farm in farms:
+    for i, farm in enumerate(farms):
+        if i % 50 == 0 and i > 0:
+            print(f"    Processed {i}/{len(farms)} farms for yield stats...")
         member_no = farm["ktda_member_no"]
         all_yields = []
         for season in farm.get("historical_seasons", []):
@@ -457,6 +509,7 @@ def evaluate_gnn(models_dir: Path):
                 "n_months": len(all_yields)
             })
 
+    print(f"  Computed yield stats for {len(yield_stats)} farms with ≥12 months data")
     if yield_stats:
         yield_df = pd.DataFrame(yield_stats)
         merged = gnn_outputs[["ktda_member_no", "cluster_id", "anomaly_score"]].merge(yield_df, on="ktda_member_no")
@@ -464,7 +517,7 @@ def evaluate_gnn(models_dir: Path):
         if len(merged) > 10:
             corr_cv = merged["anomaly_score"].corr(merged["yield_cv"])
             corr_std = merged["anomaly_score"].corr(merged["yield_std"])
-            print(f"\n  Anomaly Score vs Yield Variability Correlation:")
+            print(f"\n  Anomaly Score vs Yield Variability Correlation (n={len(merged)} farms):")
             print(f"    vs Yield CV:     {corr_cv:.4f}")
             print(f"    vs Yield Std:    {corr_std:.4f}")
 
